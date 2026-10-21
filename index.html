@@ -11134,6 +11134,11 @@ function standbyNormName(v){
   catch(e){return String(v||'').replace(/\s+/g,' ').trim().toUpperCase();}
 }
 function applyStandbySeed20260906(){
+  // DESATIVADO em 21/10/2026: o cadastro oficial agora vem do quadro/Headcount
+  // (banco Supabase). Essa lista fixa de 06/09 recolocava como ATIVAS pessoas
+  // que já saíram e voltava escalas antigas — inflando o total (ex.: 343).
+  try{ renderStandbyTable(); }catch(e){}
+  return;
   var changed=false;
   STANDBY_SEED_20260906.forEach(function(src){
     var inactive = INACTIVE.find(function(e){
