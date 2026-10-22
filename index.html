@@ -11615,6 +11615,11 @@ if(sbReady){
             }
           });
         }
+        // Quem está ATIVO no banco vindo do quadro/Headcount é oficial: limpa
+        // qualquer marca local antiga de "excluído" que esconderia a pessoa.
+        rosterRows.forEach(function(r){
+          if(r && r.ativo && String(r.fonte||'')==='headcount' && isRosterDeleted(r.id)) unmarkRosterDeleted(r.id);
+        });
         var ativosRows = rosterRows
           .filter(function(r){ return r.ativo; })
           .map(sbRowToEmp)
