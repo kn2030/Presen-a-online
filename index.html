@@ -7068,11 +7068,76 @@ function confirmFolgaScan(emp){
   );
 }
 
+// ---------- Identificação da batida pelo GROOT ID ----------
+// ANTES: a batida procurava o código lido direto em byId[código], ou seja,
+// pelo ID INTERNO do cadastro. Quando o ID interno de alguém não é igual ao
+// Groot ID (Groot ID corrigido depois do cadastro — o ID interno nunca muda —,
+// importação de planilha com outra coluna de ID, etc.), o Groot ID lido no
+// crachá podia bater no ID interno de OUTRA pessoa e a presença ia pro nome
+// errado. AGORA: o código lido é comparado PRIMEIRO com o Groot ID de todo o
+// cadastro. Só se nenhum Groot ID bater é que tenta o ID interno (crachás
+// antigos). Se dois cadastros tiverem o mesmo Groot ID, NÃO marca ninguém.
+function normScanCode(v){
+  var s = String(v == null ? '' : v).replace(/[\u0000-\u001F\s]+/g, '').trim();
+  if(/^\d+\.0+$/.test(s)) s = s.replace(/\.0+$/, ''); // "149367.0" vindo de planilha
+  return s.toLowerCase();
+}
+function resolveEmpByScanCode(code){
+  var c = normScanCode(code);
+  if(!c) return {emp:null, reason:'vazio'};
+  var list = Array.isArray(ALL) ? ALL : [];
+  var byGroot = list.filter(function(e){ return e && normScanCode(e.grootId) === c; });
+  if(byGroot.length === 1) return {emp:byGroot[0], via:'groot'};
+  if(byGroot.length > 1) return {emp:null, reason:'duplicado', matches:byGroot};
+  // Nenhum Groot ID bateu: aceita o ID interno só se essa pessoa NÃO tiver
+  // outro Groot ID cadastrado (senão o código lido não é dela).
+  var byInternal = list.filter(function(e){ return e && normScanCode(e.id) === c; });
+  if(byInternal.length === 1){
+    var e1 = byInternal[0];
+    if(!normScanCode(e1.grootId) || normScanCode(e1.grootId) === c) return {emp:e1, via:'id'};
+    return {emp:null, reason:'id-diferente', matches:byInternal};
+  }
+  return {emp:null, reason:'nao-encontrado'};
+}
+window.resolveEmpByScanCode = resolveEmpByScanCode;
+// Relatório pra conferir: quem tem ID interno diferente do Groot ID e quem
+// tem Groot ID repetido. Rode no console: knDiagnosticoGroot()
+window.knDiagnosticoGroot = function(){
+  var list = Array.isArray(ALL) ? ALL : [];
+  var diff = list.filter(function(e){ return normScanCode(e.grootId) && normScanCode(e.grootId) !== normScanCode(e.id); })
+    .map(function(e){ return {nome:e.nome, idInterno:e.id, grootId:e.grootId}; });
+  var seen = {}, dup = [];
+  list.forEach(function(e){ var g = normScanCode(e.grootId); if(!g) return; (seen[g] = seen[g] || []).push(e.nome); });
+  Object.keys(seen).forEach(function(g){ if(seen[g].length > 1) dup.push({grootId:g, nomes:seen[g].join(' / ')}); });
+  var semGroot = list.filter(function(e){ return !normScanCode(e.grootId); }).map(function(e){ return {nome:e.nome, idInterno:e.id}; });
+  console.log('[KN] ID interno ≠ Groot ID:', diff.length); if(diff.length) console.table(diff);
+  console.log('[KN] Groot ID repetido:', dup.length); if(dup.length) console.table(dup);
+  console.log('[KN] Sem Groot ID:', semGroot.length); if(semGroot.length) console.table(semGroot);
+  return {idDiferente:diff, grootRepetido:dup, semGroot:semGroot};
+};
+
 function onScanSuccess(decodedText){
-  var id = decodedText.trim();
+  var lido = String(decodedText == null ? '' : decodedText).trim();
   var now = Date.now();
-  var emp = byId[id];
+  var res = resolveEmpByScanCode(lido);
+  var emp = res.emp;
+  // A partir daqui "id" é o ID interno da pessoa ENCONTRADA pelo Groot ID —
+  // é ele que a planilha/Supabase usam como chave do registro.
+  var id = emp ? String(emp.id) : lido;
   var confirmEl = document.getElementById('scan-confirm');
+  if(!emp && res.reason === 'duplicado'){
+    flashScanTick(false);
+    if(lastScan.id === lido && (now - lastScan.t) < 5000){ return; }
+    lastScan = {id:lido, t:now};
+    playScanBeep(false);
+    confirmEl.style.display = 'block';
+    confirmEl.style.borderColor = 'var(--danger)';
+    confirmEl.style.background = '#faece9';
+    confirmEl.innerHTML = '<b style="color:var(--danger)">Groot ID '+esc(lido)+' está em mais de um cadastro</b><br>'+
+      res.matches.map(function(m){ return esc(m.nome||''); }).join('<br>')+
+      '<br><small>Presença NÃO registrada. Corrija o Groot ID na aba Grupos.</small>';
+    return;
+  }
   if(!emp){
     flashScanTick(false);
     if(lastScan.id === id && (now - lastScan.t) < 5000){ return; }
@@ -7081,7 +7146,10 @@ function onScanSuccess(decodedText){
     confirmEl.style.display = 'block';
     confirmEl.style.borderColor = 'var(--danger)';
     confirmEl.style.background = '#faece9';
-    confirmEl.innerHTML = '<b style="color:var(--danger)">Codigo nao reconhecido:</b> '+id;
+    confirmEl.innerHTML = '<b style="color:var(--danger)">Codigo nao reconhecido:</b> '+esc(lido)+
+      (res.reason === 'id-diferente'
+        ? '<br><small>Esse código é um ID interno antigo de '+esc(res.matches[0].nome||'')+', mas o Groot ID cadastrado dele(a) é '+esc(res.matches[0].grootId||'')+'. Presença NÃO registrada — reimprima o crachá.</small>'
+        : '');
     return;
   }
   // Mostra o "tick" verde toda vez que reconhece o crachá — mesmo em leituras
@@ -7108,7 +7176,7 @@ function onScanSuccess(decodedText){
   confirmEl.style.display = 'block';
   confirmEl.style.borderColor = 'var(--success)';
   confirmEl.style.background = '#eaf3ee';
-  confirmEl.innerHTML = '<b>'+emp.nome+'</b><br>'+emp.coordenador+' &middot; escala '+emp.turno+'<br>Presença registrada às '+hora+(atrasoAgora ? '<br><b>ATRASO identificado — presença mantida.</b>' : '');
+  confirmEl.innerHTML = '<b>'+esc(emp.nome)+'</b><br>Groot ID: '+esc(emp.grootId||emp.id)+'<br>'+esc(emp.coordenador||'')+' &middot; escala '+esc(emp.turno||'')+'<br>Presença registrada às '+hora+(atrasoAgora ? '<br><b>ATRASO identificado — presença mantida.</b>' : '');
   prependLog(emp, hora);
 }
 
@@ -7611,13 +7679,18 @@ function showGlobalScanToast(ok, msg){
           // usa o mesmo fluxo de sempre, com o card de confirmação e o log.
           onScanSuccess(code);
         } else {
-          var emp = byId[code];
-          if(emp){
-            if(isEmployeeOnFolgaToday(code, emp) && !confirmFolgaScan(emp)){
+          // Mesmo critério da aba "Bater presença": procura pelo GROOT ID.
+          var resG = resolveEmpByScanCode(code);
+          var emp = resG.emp;
+          var empId = emp ? String(emp.id) : code;
+          if(!emp && resG.reason === 'duplicado'){
+            showGlobalScanToast(false, 'Groot ID '+code+' repetido no cadastro — presença NÃO registrada.');
+          } else if(emp){
+            if(isEmployeeOnFolgaToday(empId, emp) && !confirmFolgaScan(emp)){
               showGlobalScanToast(false, emp.nome+' está de folga — presença não alterada.');
             } else {
               var hora = nowTime();
-              setStatus(code, 'P', hora);
+              setStatus(empId, 'P', hora);
               showGlobalScanToast(true, 'Presença registrada: '+emp.nome+' às '+hora);
             }
           } else {
@@ -9247,18 +9320,18 @@ function generateQrCodes(done){
         var card = document.createElement('div');
         card.className = 'qrcard';
         card.dataset.name = (e.nome||'').toLowerCase();
-        card.dataset.id = e.id;
+        card.dataset.id = String(e.grootId||e.id||'');
         var qrDiv = document.createElement('div');
         card.appendChild(qrDiv);
         var idLabel = document.createElement('p');
-        idLabel.textContent = e.id;
+        idLabel.textContent = String(e.grootId||e.id||'');
         card.appendChild(idLabel);
         var nameLabel = document.createElement('p');
         nameLabel.className = 'code-name-label';
         nameLabel.textContent = e.nome || '';
         card.appendChild(nameLabel);
         grid.appendChild(card);
-        new QRCode(qrDiv, {text:String(e.id||''),width:110,height:110,correctLevel:QRCode.CorrectLevel.M});
+        new QRCode(qrDiv, {text:String(e.grootId||e.id||''),width:110,height:110,correctLevel:QRCode.CorrectLevel.M});
       }catch(err){ console.error('[KN] falha ao gerar QR de', e && e.id, err); }
     }
     setCodeGenerationBusy(true, 'Gerando QR Codes… '+i+'/'+source.length);
@@ -9293,23 +9366,23 @@ function generateBarcodes(done){
     for(; i < limit; i++){
       var e = source[i];
       try{
-        if(!e || !e.id) continue;
+        if(!e || !(e.grootId||e.id)) continue;
         var card = document.createElement('div');
         card.className = 'barcodecard';
         card.dataset.name = (e.nome||'').toLowerCase();
-        card.dataset.id = e.id;
+        card.dataset.id = String(e.grootId||e.id||'');
         var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         card.appendChild(svg);
         var idLabel = document.createElement('div');
         idLabel.className = 'barcode-id';
-        idLabel.textContent = e.id;
+        idLabel.textContent = String(e.grootId||e.id||'');
         card.appendChild(idLabel);
         var nameLabel = document.createElement('div');
         nameLabel.className = 'code-name-label';
         nameLabel.textContent = e.nome || '';
         card.appendChild(nameLabel);
         grid.appendChild(card);
-        JsBarcode(svg, String(e.id), {format:'CODE128',displayValue:false,width:1.25,height:34,margin:1,background:'#ffffff',lineColor:'#000000'});
+        JsBarcode(svg, String(e.grootId||e.id), {format:'CODE128',displayValue:false,width:1.25,height:34,margin:1,background:'#ffffff',lineColor:'#000000'});
       }catch(err){ console.error('[KN] falha ao gerar código de barras de', e && e.id, err); }
     }
     setCodeGenerationBusy(true, 'Gerando códigos de barras… '+i+'/'+source.length);
