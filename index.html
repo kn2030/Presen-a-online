@@ -6824,6 +6824,12 @@ function nowTime(){
   var d = new Date();
   return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
+// Hora COM segundos = presença bipada (QR/código). É isso que o banco envia
+// automaticamente para a planilha. Marcação à mão continua sem segundos.
+function nowTimeBipe(){
+  var d = new Date();
+  return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+}
 function storageKey(date){ return 'presenca:'+date; }
 
 function loadState(date){
@@ -7170,7 +7176,7 @@ function onScanSuccess(decodedText){
   }
 
   playScanBeep(true);
-  var hora = nowTime();
+  var hora = nowTimeBipe();
   setStatus(id, 'P', hora);
   var atrasoAgora = isRegistroAtrasado(emp, {status:'P', hora:hora});
   confirmEl.style.display = 'block';
@@ -7689,7 +7695,7 @@ function showGlobalScanToast(ok, msg){
             if(isEmployeeOnFolgaToday(empId, emp) && !confirmFolgaScan(emp)){
               showGlobalScanToast(false, emp.nome+' está de folga — presença não alterada.');
             } else {
-              var hora = nowTime();
+              var hora = nowTimeBipe();
               setStatus(empId, 'P', hora);
               showGlobalScanToast(true, 'Presença registrada: '+emp.nome+' às '+hora);
             }
